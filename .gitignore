@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+dist
+.env*
+!.env.example
+.vercel
+*.log
+.tools
+*.tsbuildinfo
+verification-*.png
+
+# Logical database exports. Contains every lead, contact and message ever sent.
+backups/
+.env.production.local
