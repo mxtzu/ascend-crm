@@ -20,7 +20,7 @@ level security · Stripe · Google Calendar · Resend · Twilio · Sentry.
 | **Clients** | Accounts, contracts, documents, notes, tasks |
 | **Calendar** | Appointments, two-way Google Calendar sync, Google Meet links |
 | **Billing** | Stripe invoices and retainer subscriptions; MRR, collected, outstanding, overdue |
-| **Outreach** | Email and SMS sequences, reply detection, suppression list, one-click unsubscribe |
+| **Outreach** | Email and SMS sequences, bulk enrolment from the lead list, reply detection, suppression list, one-click unsubscribe |
 
 ---
 

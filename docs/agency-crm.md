@@ -560,7 +560,36 @@ curl -X POST "$SITE/api/crm/outreach/run" -H "Authorization: Bearer $OUTREACH_RU
 Fails closed — without the secret the scheduled path answers 503 rather than
 running unauthenticated.
 
-#### The send gate
+##### Enrolling a batch
+
+The lead list's bulk bar has an **Enrol in** control beside the stage mover.
+Tick leads, choose an active sequence, submit. It applies the same consent
+rules as the single-lead form on a lead's own page, and reports what it left
+out and why:
+
+> Enrolled 43 leads in Cold open. Skipped: 4 already enrolled, 2 at a stage
+> outreach does not apply to, 6 with no email or phone, 1 on the do-not-contact
+> list.
+
+It always writes to the published business address. Choosing a specific contact
+is a per-lead decision, so that stays on the lead's own page.
+
+One implementation note worth knowing, because it is a duplication that could
+drift. The single-lead path asks `crm_is_suppressed()` once per lead; at two
+hundred leads that is two hundred round trips and does not finish inside a
+serverless invocation. So the bulk path reads the whole `suppressions` table
+once and matches locally, which means `normaliseEmail` / `normalisePhone` in
+`src/lib/outreach/enrolment.ts` reimplement `normalise_suppression()` in
+TypeScript. Both are pinned to the same table of cases — in that file's test and
+in the `normalisation matches the TypeScript mirror` block of
+`supabase/tests/outreach_test.sql` — so changing one without the other fails a
+suite.
+
+None of that is the safety guarantee. The gate re-checks suppression
+immediately before every individual send, and that is what protects someone who
+unsubscribed between being enrolled and being written to.
+
+### The send gate
 
 Every message passes these, in this order, and the first objection is recorded
 as the reason:

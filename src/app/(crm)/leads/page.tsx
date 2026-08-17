@@ -8,7 +8,7 @@
 
 import Link from 'next/link';
 
-import { moveLeadsToStage } from '@/app/(crm)/_actions/bulk';
+import { enrolLeadsInSequence, moveLeadsToStage } from '@/app/(crm)/_actions/bulk';
 import { BulkStageBar, SelectAllLeads, SelectLead } from '@/components/crm/bulkStage';
 import { ActionError, ActionNotice, ReturnTo } from '@/components/crm/forms';
 import { ImportPanel } from '@/components/crm/importPanel';
@@ -25,8 +25,9 @@ import {
 } from '@/components/crm/ui';
 import { formatRelative, orDash } from '@/lib/crm/format';
 import { canWrite, isAdmin } from '@/lib/crm/permissions';
-import { listLeads } from '@/lib/crm/queries';
+import { listLeads, listOutreachSequences } from '@/lib/crm/queries';
 import { crmSession } from '@/lib/crm/server';
+import { getOutreachSettings } from '@/lib/outreach/queries';
 import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, isPipelineStage } from '@/lib/crm/types';
 
 export const dynamic = 'force-dynamic';
@@ -46,7 +47,14 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
   const minScore = Number.isFinite(parsedScore) && parsedScore > 0 ? parsedScore : undefined;
 
   const { client, profile } = await crmSession();
-  const leads = await listLeads(client, { stage, search, minScore, limit: 200 });
+  const [leads, sequences, settings] = await Promise.all([
+    listLeads(client, { stage, search, minScore, limit: 200 }),
+    listOutreachSequences(client),
+    getOutreachSettings(client)
+  ]);
+  const activeSequences = sequences
+    .filter((sequence) => sequence.active)
+    .map((sequence) => ({ id: sequence.id, name: sequence.name }));
   const canImport = isAdmin(profile);
   const canMove = canWrite(profile);
   const unfiltered = !stage && !search && !minScore;
@@ -131,7 +139,16 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
       <Card
         title={`${leads.length} lead${leads.length === 1 ? '' : 's'}`}
         description={leads.length === 200 ? 'Showing the first 200 matches.' : undefined}
-        footer={canMove && leads.length > 0 ? <BulkStageBar stageCount={leads.length} /> : undefined}
+        footer={
+          canMove && leads.length > 0 ? (
+            <BulkStageBar
+              stageCount={leads.length}
+              sequences={activeSequences}
+              enrolAction={enrolLeadsInSequence}
+              sendingEnabled={settings?.sending_enabled ?? false}
+            />
+          ) : undefined
+        }
       >
         {leads.length === 0 ? (
           <EmptyState

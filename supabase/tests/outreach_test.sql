@@ -457,6 +457,88 @@ end;
 $$;
 
 \echo ''
+\echo '== normalisation matches the TypeScript mirror =='
+
+--
+-- Bulk enrolment reads the whole suppression list once and matches locally,
+-- which means normaliseEmail/normalisePhone in src/lib/outreach/enrolment.ts
+-- reimplement normalise_suppression() in another language.
+--
+-- These are the same cases as `normalisation mirrors normalise_suppression()`
+-- in that file's test. Changing either side without the other fails a suite,
+-- which is the only thing keeping the two in step.
+--
+-- Values are unique to this block: earlier tests in this file already hold
+-- suppressions, and both identifier columns are uniquely indexed.
+--
+do $$
+declare
+  cases text[][] := array[
+    array['MirrorOne@Example.INVALID',    'mirrorone@example.invalid'],
+    array['  mirror.two@example.invalid  ','mirror.two@example.invalid'],
+    array['',                              null],
+    array['   ',                           null]
+  ];
+  c   text[];
+  n   int := 0;
+  got text;
+begin
+  delete from public.suppressions where source = 'mirror-test';
+
+  foreach c slice 1 in array cases loop
+    n := n + 1;
+    insert into public.suppressions (email, phone, reason, source)
+    values (nullif(btrim(c[1]), ''), '+1555000' || lpad(n::text, 4, '0'), 'manual', 'mirror-test');
+
+    select email into got
+      from public.suppressions
+     where source = 'mirror-test' and phone = '+1555000' || lpad(n::text, 4, '0');
+
+    perform pg_temp.assert(
+      got is not distinct from c[2],
+      format('email %L normalises to %L', c[1], c[2])
+    );
+  end loop;
+
+  delete from public.suppressions where source = 'mirror-test';
+end;
+$$;
+
+do $$
+declare
+  cases text[][] := array[
+    array['+44 (0)7700 911222', '+4407700911222'],
+    array['07700-911-333',      '07700911333'],
+    array['+447700911444',      '+447700911444'],
+    array['---',                 null]
+  ];
+  c   text[];
+  n   int := 0;
+  got text;
+  key text;
+begin
+  delete from public.suppressions where source = 'mirror-test';
+
+  foreach c slice 1 in array cases loop
+    n := n + 1;
+    key := 'mirror.phone' || n || '@example.invalid';
+
+    insert into public.suppressions (email, phone, reason, source)
+    values (key, nullif(c[1], ''), 'manual', 'mirror-test');
+
+    select phone into got from public.suppressions where email = key;
+
+    perform pg_temp.assert(
+      got is not distinct from c[2],
+      format('phone %L normalises to %L', c[1], c[2])
+    );
+  end loop;
+
+  delete from public.suppressions where source = 'mirror-test';
+end;
+$$;
+
+\echo ''
 \echo '=========================================='
 \echo ' ALL OUTREACH TESTS PASSED'
 \echo '=========================================='
