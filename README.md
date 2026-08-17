@@ -14,7 +14,7 @@ level security · Stripe · Google Calendar · Resend · Twilio · Sentry.
 | Area | |
 | --- | --- |
 | **Leads** | Import a pipeline export from the browser or the API, filter by stage/score/name, full timeline |
-| **Pipeline** | Board by stage, with stage-change history recorded in the database |
+| **Pipeline** | Board by stage, bulk stage moves from the lead list, stage-change history recorded in the database |
 | **Sales calls** | A call workspace: talking points, notes, follow-up and next task in one save |
 | **Opportunities** | Deals, weighted value, proposals, won → client, lost with a reason |
 | **Clients** | Accounts, contracts, documents, notes, tasks |

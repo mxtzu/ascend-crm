@@ -241,6 +241,36 @@ Wall-clock times entered in a form are interpreted in `Europe/London` unless the
 record carries its own zone, as appointments do. The offset is looked up rather
 than assumed: 14:00 in London is 14:00Z in January and 13:00Z in June.
 
+### Moving a batch of leads
+
+`/leads` has a checkbox per row and a **Move selected to** bar. Tick some leads
+— or the header box to take everything on screen — choose a stage, and submit.
+It returns you to the filtered view you were working through, so a large batch
+can be done in passes.
+
+This runs under the caller's own session, not the service role: `crm_leads_update`
+requires `crm_can_write()`, so RLS refuses a viewer whatever the interface does.
+Every row it moves is written to `pipeline_stage_history` by the
+`crm_leads_record_stage_update` trigger, exactly as a single move would be.
+
+Two rules it applies that the UI cannot show you:
+
+- **Leads already at the target are skipped.** The history trigger fires on any
+  write to `pipeline_stage`, so writing a lead to the stage it is already on
+  would put a meaningless row in its history.
+- **Leads at `do_not_contact` are never moved.** Somebody who ticked "select
+  all" and chose `ready_for_outreach` did not mean to put a person who asked
+  not to be contacted back into a sending queue. Suppression at send time is
+  the real guarantee; this stops the record being quietly resurrected. Moving
+  one out of `do_not_contact` is still possible from that lead's own page, one
+  deliberate act at a time.
+
+It deliberately does **not** use `crm_advance_lead_stage()`. That RPC is
+forward-only and ranks the closed stages at 0, which is right for the sales
+workflow — a deal should not silently reverse — and wrong here: preparing an
+outreach batch legitimately includes moving leads backwards to re-work them,
+and marking a batch `disqualified` is a move the RPC cannot express.
+
 ### The sales workflow
 
 Five transitions move a deal, and each one touches several tables at once:
@@ -658,7 +688,7 @@ Put in triggers rather than application code, so it holds no matter which client
 | --- | --- |
 | `/login` | Sign in (server action; no credentials in client JS) |
 | `/dashboard` | Today's tasks, upcoming appointments, weighted pipeline, recent leads |
-| `/leads` | Filterable list — stage, minimum score, company-name search; import panel for admins |
+| `/leads` | Filterable list — stage, minimum score, company-name search; bulk stage moves; import panel for admins |
 | `/leads/[id]` | CRM state, intelligence, timeline + CRUD for contacts, tasks, appointments, opportunities, notes |
 | `/leads/[id]/call` | Sales call workspace — talking points, call notes, follow-up and task in one save |
 | `/pipeline` | Board, one column per active stage |

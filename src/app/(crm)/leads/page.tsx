@@ -8,7 +8,9 @@
 
 import Link from 'next/link';
 
-import { ActionError, ActionNotice } from '@/components/crm/forms';
+import { moveLeadsToStage } from '@/app/(crm)/_actions/bulk';
+import { BulkStageBar, SelectAllLeads, SelectLead } from '@/components/crm/bulkStage';
+import { ActionError, ActionNotice, ReturnTo } from '@/components/crm/forms';
 import { ImportPanel } from '@/components/crm/importPanel';
 import {
   AdvertisingBadge,
@@ -22,7 +24,7 @@ import {
   Table
 } from '@/components/crm/ui';
 import { formatRelative, orDash } from '@/lib/crm/format';
-import { isAdmin } from '@/lib/crm/permissions';
+import { canWrite, isAdmin } from '@/lib/crm/permissions';
 import { listLeads } from '@/lib/crm/queries';
 import { crmSession } from '@/lib/crm/server';
 import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, isPipelineStage } from '@/lib/crm/types';
@@ -46,7 +48,16 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
   const { client, profile } = await crmSession();
   const leads = await listLeads(client, { stage, search, minScore, limit: 200 });
   const canImport = isAdmin(profile);
+  const canMove = canWrite(profile);
   const unfiltered = !stage && !search && !minScore;
+
+  // Round-trips the caller to the view they were working through rather than a
+  // bare /leads, so a filtered batch can be worked in passes.
+  const query = new URLSearchParams();
+  if (stage) query.set('stage', stage);
+  if (search) query.set('q', search);
+  if (minScore) query.set('min_score', String(minScore));
+  const here = query.toString() ? `/leads?${query.toString()}` : '/leads';
 
   return (
     <>
@@ -115,9 +126,12 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
         </form>
       </Card>
 
+      <form action={moveLeadsToStage}>
+      <ReturnTo path={here} />
       <Card
         title={`${leads.length} lead${leads.length === 1 ? '' : 's'}`}
         description={leads.length === 200 ? 'Showing the first 200 matches.' : undefined}
+        footer={canMove && leads.length > 0 ? <BulkStageBar stageCount={leads.length} /> : undefined}
       >
         {leads.length === 0 ? (
           <EmptyState
@@ -129,11 +143,24 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
             }
           />
         ) : (
-          <Table head={['Business', 'Contact', 'Location', 'Score', 'Ads', 'Stage', 'Owner', 'Updated']}>
+          <Table
+            head={[
+              canMove ? <SelectAllLeads key="all" /> : '',
+              'Business',
+              'Contact',
+              'Location',
+              'Score',
+              'Ads',
+              'Stage',
+              'Owner',
+              'Updated'
+            ]}
+          >
             {leads.map((lead) => {
               const info = lead.intelligence;
               return (
                 <Row key={lead.id}>
+                  <Cell className="w-8">{canMove ? <SelectLead id={lead.id} /> : null}</Cell>
                   <Cell>
                     <Link
                       href={`/leads/${lead.id}`}
@@ -177,6 +204,7 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
           </Table>
         )}
       </Card>
+      </form>
     </>
   );
 }

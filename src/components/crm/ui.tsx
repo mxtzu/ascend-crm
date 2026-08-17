@@ -40,12 +40,15 @@ export function Card({
   title,
   description,
   actions,
+  footer,
   children,
   className = ''
 }: {
   title?: string;
   description?: string;
   actions?: ReactNode;
+  /** Rendered flush beneath the body, outside its padding. For toolbars. */
+  footer?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
@@ -63,6 +66,7 @@ export function Card({
         </div>
       ) : null}
       <div className="px-5 py-4">{children}</div>
+      {footer ?? null}
     </section>
   );
 }
