@@ -60,8 +60,13 @@ many times it is re-scraped.
    SUPABASE_SERVICE_ROLE_KEY=<service role key>   # server-side only, never NEXT_PUBLIC
    ```
 
-3. **Create a user.** Supabase dashboard → Authentication → Add user. A `profiles` row is
-   created automatically by the `handle_new_auth_user` trigger, with role `sales`.
+3. **Create a user.** Supabase dashboard → Authentication → Add user. **Tick "Auto
+   Confirm User"** — no SMTP is configured on a fresh project, so an unconfirmed account
+   waits for a link that never arrives and sign-in fails with "Email not confirmed".
+
+   A `profiles` row is created automatically by the `handle_new_auth_user` trigger, with
+   role `viewer` — the column default. `viewer` is read-only, so a brand-new account can
+   see the CRM and change nothing, which reads as a broken application until step 4.
 
 4. **Promote yourself to owner** (the first account has to be done by hand, since only an
    admin can change roles):
