@@ -276,6 +276,17 @@ export function isImportable(lead: PipelineLeadExport): boolean {
   return Boolean(str(lead.lead_id) && str(lead.company_name));
 }
 
+/**
+ * The score `syncLeads` filters on.
+ *
+ * Exported so the import preview cannot drift from the real run. A dry run
+ * that disagrees with what actually happens is worse than offering no preview,
+ * and one shared function is the only way to guarantee it cannot.
+ */
+export function leadScore(lead: PipelineLeadExport): number {
+  return num(lead.lead_score ?? lead.score?.total) ?? 0;
+}
+
 export function parseExportDocument(raw: unknown): PipelineLeadExport[] {
   if (Array.isArray(raw)) return raw as PipelineLeadExport[];
   if (raw && typeof raw === 'object') {
@@ -321,8 +332,7 @@ export async function syncLeads(
       result.skippedInvalid += 1;
       continue;
     }
-    const score = num(lead.lead_score ?? lead.score?.total) ?? 0;
-    if (score < minScore) {
+    if (leadScore(lead) < minScore) {
       result.skippedBelowMinScore += 1;
       continue;
     }

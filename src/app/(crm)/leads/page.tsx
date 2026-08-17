@@ -8,6 +8,8 @@
 
 import Link from 'next/link';
 
+import { ActionError, ActionNotice } from '@/components/crm/forms';
+import { ImportPanel } from '@/components/crm/importPanel';
 import {
   AdvertisingBadge,
   Card,
@@ -20,8 +22,9 @@ import {
   Table
 } from '@/components/crm/ui';
 import { formatRelative, orDash } from '@/lib/crm/format';
+import { isAdmin } from '@/lib/crm/permissions';
 import { listLeads } from '@/lib/crm/queries';
-import { crmClient } from '@/lib/crm/server';
+import { crmSession } from '@/lib/crm/server';
 import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, isPipelineStage } from '@/lib/crm/types';
 
 export const dynamic = 'force-dynamic';
@@ -30,6 +33,8 @@ interface SearchParams {
   stage?: string;
   q?: string;
   min_score?: string;
+  error?: string;
+  notice?: string;
 }
 
 export default async function LeadsPage({ searchParams }: { searchParams?: SearchParams }) {
@@ -38,7 +43,10 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
   const parsedScore = Number(searchParams?.min_score);
   const minScore = Number.isFinite(parsedScore) && parsedScore > 0 ? parsedScore : undefined;
 
-  const leads = await listLeads(crmClient(), { stage, search, minScore, limit: 200 });
+  const { client, profile } = await crmSession();
+  const leads = await listLeads(client, { stage, search, minScore, limit: 200 });
+  const canImport = isAdmin(profile);
+  const unfiltered = !stage && !search && !minScore;
 
   return (
     <>
@@ -47,6 +55,13 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
         title="Leads"
         description="Businesses discovered and scored by the lead pipeline. Sales state lives here; the underlying research is a read-only snapshot."
       />
+
+      <ActionError message={searchParams?.error} />
+      <ActionNotice message={searchParams?.notice} />
+
+      {/* Open on an empty CRM: importing is the only useful thing on this page
+          until there is something in it. */}
+      <ImportPanel canImport={canImport} open={leads.length === 0 && unfiltered} />
 
       <Card className="mb-4">
         <form method="get" className="flex flex-wrap items-end gap-3">
@@ -107,7 +122,11 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
         {leads.length === 0 ? (
           <EmptyState
             title="No leads match"
-            description="Import a pipeline export with `npm run sync:leads -- --file <export.json>`, or widen the filters."
+            description={
+              canImport
+                ? 'Import a pipeline export using the panel above, or widen the filters.'
+                : 'Widen the filters, or ask an owner or admin to import a pipeline export.'
+            }
           />
         ) : (
           <Table head={['Business', 'Contact', 'Location', 'Score', 'Ads', 'Stage', 'Owner', 'Updated']}>

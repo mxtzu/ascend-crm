@@ -78,10 +78,18 @@ const nextConfig = {
   images: {
     unoptimized: true
   },
-  // Next 14 ignores instrumentation.ts entirely without this. On 15+ the hook
-  // is stable and the flag is a no-op.
   experimental: {
-    instrumentationHook: true
+    // Next 14 ignores instrumentation.ts entirely without this. On 15+ the
+    // hook is stable and the flag is a no-op.
+    instrumentationHook: true,
+    serverActions: {
+      // The lead import posts a JSON export through a server action, and the
+      // 1 MB default rejects a few hundred enriched leads. 4 MB sits just
+      // under Vercel's own 4.5 MB body ceiling, which no config can raise —
+      // src/lib/crm/import.ts checks the size first so an oversized file gets
+      // a sentence naming the CLI instead of a platform 413.
+      bodySizeLimit: '4mb'
+    }
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

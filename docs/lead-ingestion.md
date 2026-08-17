@@ -150,9 +150,30 @@ real contact when it turns out to be right.
 
 ---
 
+## Importing from the browser
+
+`/leads` has an **Import leads from a pipeline export** panel for owners and
+admins. Choose the JSON file, optionally set a score floor and a starting
+stage, and submit.
+
+**It previews by default.** The "Preview first" box is ticked, so the first
+submit counts what would be imported and writes nothing. Untick it to import
+for real. The preview shares `isImportable` and `leadScore` with `syncLeads`
+itself, so it cannot report one thing and then do another.
+
+**Owners and admins only.** The import writes `lead_intelligence`, which has no
+write policy for any CRM role — it runs as the service role, so row level
+security is not standing behind it and the role check in the action is the
+whole control. `sales` and `account_manager` are refused even though they can
+write everything else.
+
+**Up to 4 MB.** Vercel rejects a serverless request body over 4.5 MB before any
+application code runs. Larger exports go through the CLI or the endpoint, which
+have no such limit.
+
 ## Running it by hand
 
-The CLI applies exactly the same rules as the endpoint:
+The CLI applies exactly the same rules as the panel and the endpoint:
 
 ```bash
 npm run sync:leads -- --file leads.json --min-score 55

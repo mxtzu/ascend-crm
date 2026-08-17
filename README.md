@@ -13,7 +13,7 @@ level security · Stripe · Google Calendar · Resend · Twilio · Sentry.
 
 | Area | |
 | --- | --- |
-| **Leads** | Import from an external pipeline, filter by stage/score/name, full timeline |
+| **Leads** | Import a pipeline export from the browser or the API, filter by stage/score/name, full timeline |
 | **Pipeline** | Board by stage, with stage-change history recorded in the database |
 | **Sales calls** | A call workspace: talking points, notes, follow-up and next task in one save |
 | **Opportunities** | Deals, weighted value, proposals, won → client, lost with a reason |
@@ -94,9 +94,12 @@ the database enforces that by having no write policy on `payments` for any role.
 
 ## Lead ingestion
 
-**This repository contains no scraper.** Leads arrive from a separate pipeline
-over `POST /api/crm/sync-leads`, authenticated with `LEAD_SYNC_SECRET`. Payload
-contract, idempotency rules and the obligations on the sending side are in
+**This repository contains no scraper.** Leads arrive from a separate pipeline,
+three ways: the **Import** panel on `/leads` (owners and admins, previews by
+default), `npm run sync:leads -- --file <export.json>`, or
+`POST /api/crm/sync-leads` authenticated with `LEAD_SYNC_SECRET`. All three go
+through the same idempotent `syncLeads`. Payload contract, idempotency rules
+and the obligations on the sending side are in
 **[docs/lead-ingestion.md](docs/lead-ingestion.md)**.
 
 ## Outreach is off by default

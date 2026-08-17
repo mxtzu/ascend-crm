@@ -73,8 +73,8 @@ what they say".
 
 Framework preset **Next.js**, Node runtime, region `lhr1` (see `vercel.json`).
 
-**Do not set `GITHUB_PAGES`.** The marketing site can be statically exported;
-the CRM cannot, and `npm run preflight` fails the build if it finds the flag.
+Every route is server-rendered per request, so there is no static-export
+option here and nothing to configure for one.
 
 ### Environment variables
 

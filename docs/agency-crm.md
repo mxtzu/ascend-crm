@@ -81,7 +81,7 @@ many times it is re-scraped.
    npm run doctor
    ```
 
-   Validates configuration, confirms all 18 tables exist and both migrations are
+   Validates configuration, confirms every table exists and the migrations are
    applied, finds an admin account, and — most importantly — verifies that a
    signed-out request reads nothing. A misconfigured CRM and an empty one look
    identical in the browser, so guessing between them costs more than the check.
@@ -108,9 +108,8 @@ prefix, a Stripe key with no webhook secret, outreach with no site URL for its
 unsubscribe links, or the `service_role` key pasted into the anon slot.
 
 
-**Vercel**, Node runtime. Do not set `GITHUB_PAGES=true` — the CRM is
-server-rendered per request and cannot be statically exported; `npm run doctor`
-fails the build target check if it finds it.
+**Vercel**, Node runtime, region `lhr1` (see `vercel.json`). The CRM is
+server-rendered per request and cannot be statically exported.
 
 Environment variables, all three at Production scope:
 
@@ -159,6 +158,10 @@ deliberately excluded — it authenticates with a shared secret, not a session.
 
 Leads arrive as a JSON document produced by the external pipeline. Full payload
 contract in **[docs/lead-ingestion.md](lead-ingestion.md)**.
+
+**From the browser.** `/leads` has an import panel for owners and admins:
+choose the file, optionally set a score floor and starting stage, and submit.
+It previews by default and writes nothing until you untick "Preview first".
 
 From a file, using the CLI:
 
@@ -655,7 +658,7 @@ Put in triggers rather than application code, so it holds no matter which client
 | --- | --- |
 | `/login` | Sign in (server action; no credentials in client JS) |
 | `/dashboard` | Today's tasks, upcoming appointments, weighted pipeline, recent leads |
-| `/leads` | Filterable list — stage, minimum score, company-name search |
+| `/leads` | Filterable list — stage, minimum score, company-name search; import panel for admins |
 | `/leads/[id]` | CRM state, intelligence, timeline + CRUD for contacts, tasks, appointments, opportunities, notes |
 | `/leads/[id]/call` | Sales call workspace — talking points, call notes, follow-up and task in one save |
 | `/pipeline` | Board, one column per active stage |
