@@ -1,12 +1,18 @@
 # Scheduled work
 
-`vercel.json` declares two crons. Both hit endpoints that already refuse
-unauthenticated callers, and both need a secret before they do anything.
+Two endpoints want driving on a schedule. Both already refuse unauthenticated
+callers, and both need a secret before they do anything.
 
-| Path | Schedule | Needs |
+| Path | Suggested schedule | Needs |
 | --- | --- | --- |
 | `/api/crm/outreach/run` | every 15 min, 09:00–17:59 Mon–Fri (UTC) | `OUTREACH_RUN_SECRET` |
 | `/api/crm/calendar/sync` | every 20 min | `CALENDAR_SYNC_SECRET` |
+
+**`vercel.json` deliberately does not declare these as Vercel crons.** It used
+to, and those declarations could never have worked — see below. They were
+removed rather than left as decoration, because a cron that fires every fifteen
+minutes and collects a 405 every time looks exactly like scheduled work that is
+running fine.
 
 ## Two things about Vercel crons that bite
 
@@ -39,6 +45,11 @@ jobs:
           SITE: ${{ secrets.SITE_URL }}
           SECRET: ${{ secrets.OUTREACH_RUN_SECRET }}
 ```
+
+**Sub-daily schedules need a paid plan.** On Hobby, Vercel accepts at most two
+crons and only once-a-day schedules; a `*/15` expression fails the deployment
+outright rather than degrading. That was the second reason to keep them out of
+`vercel.json` — an external scheduler has no such limit.
 
 **The cron schedule is UTC.** The 09:00–17:59 window above is UTC, and the
 engine applies its *own* window from `outreach_settings.timezone` on top. In
