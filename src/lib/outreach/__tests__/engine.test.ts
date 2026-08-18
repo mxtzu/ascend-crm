@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { blockedReason, isTransientBlock, withinSendWindow, type OutreachSettings } from '../gate';
 import { CLAIM_LEASE_MS, reclaimForTest, runOutreach } from '../engine';
 import {
+  emailProvider,
+  emailProviderState,
+  isEmailConfigured,
+  providerProblem,
+  smsProviderState
+} from '../config';
+import {
   contact,
   ENROLMENT_ID,
   enrolment,
@@ -557,5 +564,53 @@ describe('taking over a claimed step', () => {
 
   it('backs off when the row vanished', async () => {
     expect((await attempt(null)).result).toBeNull();
+  });
+});
+
+/**
+ * Telling absent from blank.
+ *
+ * "No email provider is configured" was true of three situations with three
+ * different fixes, and working out which cost several rounds of guessing
+ * against a live deployment. The distinction is now made in code and shown on
+ * the page.
+ */
+describe('why a channel is unavailable', () => {
+  it('is ready when the key has a value', () => {
+    expect(emailProviderState({ RESEND_API_KEY: 're_abc123' })).toBe('ready');
+  });
+
+  it('is absent when the variable is not in the environment', () => {
+    expect(emailProviderState({})).toBe('absent');
+  });
+
+  it('is blank when the variable exists with an empty value', () => {
+    expect(emailProviderState({ RESEND_API_KEY: '' })).toBe('blank');
+    expect(emailProviderState({ RESEND_API_KEY: '   ' })).toBe('blank');
+  });
+
+  it('treats an explicitly undefined variable as absent', () => {
+    expect(emailProviderState({ RESEND_API_KEY: undefined })).toBe('absent');
+  });
+
+  it('tolerates a key pasted with surrounding whitespace', () => {
+    // Copying an API key out of a dashboard routinely brings a newline with
+    // it. That is still the key.
+    expect(emailProvider({ RESEND_API_KEY: '  re_abc123\n' })).not.toBeNull();
+    expect(isEmailConfigured({ RESEND_API_KEY: '  re_abc123\n' })).toBe(true);
+  });
+
+  it('needs both halves of the Twilio pair', () => {
+    expect(smsProviderState({ TWILIO_ACCOUNT_SID: 'AC1' })).toBe('absent');
+    expect(smsProviderState({ TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: '' })).toBe('blank');
+    expect(smsProviderState({ TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't' })).toBe('ready');
+  });
+
+  it('says something actionable for each state', () => {
+    expect(providerProblem('ready', 'RESEND_API_KEY')).toBeNull();
+    expect(providerProblem('blank', 'RESEND_API_KEY')).toContain('value is empty');
+    // The redeploy note matters: Vercel binds variables at build time, so
+    // adding one changes nothing until the next deployment.
+    expect(providerProblem('absent', 'RESEND_API_KEY')).toContain('redeploy');
   });
 });

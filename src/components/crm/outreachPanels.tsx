@@ -61,6 +61,8 @@ export function SendingStatus({
   settings,
   emailConfigured,
   smsConfigured,
+  emailProblem,
+  smsProblem,
   sentToday,
   isAdminUser,
   runAction
@@ -68,6 +70,9 @@ export function SendingStatus({
   settings: OutreachSettings | null;
   emailConfigured: boolean;
   smsConfigured: boolean;
+  /** Why email is unavailable, naming the variable. Null when it is fine. */
+  emailProblem?: string | null;
+  smsProblem?: string | null;
   sentToday: number;
   isAdminUser: boolean;
   runAction: Action;
@@ -118,6 +123,19 @@ export function SendingStatus({
           )}
         </p>
       </div>
+
+      {/* Naming the variable and its exact fault, because "not configured" is
+          true of three different situations with three different fixes. */}
+      {emailProblem ? (
+        <p className="mt-3 rounded-lg border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-xs text-amber-200/90">
+          <span className="font-medium">Email cannot send.</span> {emailProblem}
+        </p>
+      ) : null}
+      {smsProblem && settings.sms_from_number ? (
+        <p className="mt-2 rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-xs text-white/45">
+          <span className="font-medium">SMS cannot send.</span> {smsProblem}
+        </p>
+      ) : null}
 
       {isAdminUser && on ? (
         <form action={runAction} className="mt-3">

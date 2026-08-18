@@ -32,7 +32,13 @@ import { formatRelative, humanise } from '@/lib/crm/format';
 import { canWrite, isAdmin } from '@/lib/crm/permissions';
 import { listLeads, listOutreachSequences, listOutreachSteps } from '@/lib/crm/queries';
 import { crmSession } from '@/lib/crm/server';
-import { isEmailConfigured, isSmsConfigured } from '@/lib/outreach/config';
+import {
+  emailProviderState,
+  isEmailConfigured,
+  isSmsConfigured,
+  providerProblem,
+  smsProviderState
+} from '@/lib/outreach/config';
 import {
   getOutreachSettings,
   listEnrolments,
@@ -117,6 +123,8 @@ export default async function OutreachPage({
         settings={settings}
         emailConfigured={isEmailConfigured()}
         smsConfigured={isSmsConfigured()}
+        emailProblem={providerProblem(emailProviderState(), 'RESEND_API_KEY')}
+        smsProblem={providerProblem(smsProviderState(), 'TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN')}
         sentToday={sentToday}
         isAdminUser={admin}
         runAction={runOutreachNow}
