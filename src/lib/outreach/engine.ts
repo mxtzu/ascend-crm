@@ -295,7 +295,14 @@ async function processEnrolment(
       suppressed: Boolean(suppressed),
       ignoreSendWindow: step.ignore_send_window
     },
-    { settings, now, sentToday: counters.sentToday, sentThisRun: counters.sentThisRun }
+    {
+      settings,
+      now,
+      sentToday: counters.sentToday,
+      sentThisRun: counters.sentThisRun,
+      hasEmailProvider: Boolean(deps.email),
+      hasSmsProvider: Boolean(deps.sms)
+    }
   );
 
   if (reason) {

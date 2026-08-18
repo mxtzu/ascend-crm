@@ -605,6 +605,29 @@ Caps and windows are *transient* — the enrolment keeps its place and goes out
 next run. Suppression and a missing address are *settled*: the sequence stops
 rather than retrying forever.
 
+#### When a send is blocked
+
+A blocked send is one of two things, and the difference decides whether the
+enrolment keeps its place in the queue.
+
+**Transient** — a per-run or daily cap, a closed sending window, sending
+switched off, or the deployment having no provider key for that channel. All of
+these clear when somebody changes something. The enrolment is left exactly
+where it is and goes out on a later run.
+
+**Settled** — the address is on the do-not-contact list, the lead is at a stage
+outreach does not apply to, or there is no address to write to. Retrying these
+every run forever would fill the ledger with noise, so the enrolment stops.
+
+The provider case is listed explicitly because it was originally on the wrong
+side. A missing `RESEND_API_KEY` threw from the send path as an ordinary Error,
+and the failure handler treats a non-`ProviderError` as permanent — so a single
+run with the key unset stopped **every enrolment it touched**, each needing
+reactivation by hand. With a few hundred leads enrolled that is a campaign
+killed by an unset environment variable. It is now checked in the gate, next to
+"sending is switched off", which is the same kind of fact about the deployment
+rather than about the recipient.
+
 #### Suppression
 
 `suppressions` is the most important table in the migration. It is written by

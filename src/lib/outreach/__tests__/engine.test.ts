@@ -53,7 +53,14 @@ function candidate(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const CONTEXT = { settings: GATE_SETTINGS, now: IN_WINDOW, sentToday: 0, sentThisRun: 0 };
+const CONTEXT = {
+  settings: GATE_SETTINGS,
+  now: IN_WINDOW,
+  sentToday: 0,
+  sentThisRun: 0,
+  hasEmailProvider: true,
+  hasSmsProvider: true
+};
 
 describe('the send gate', () => {
   it('permits an ordinary send', () => {
@@ -98,6 +105,41 @@ describe('the send gate', () => {
   it('respects the per-run and daily caps', () => {
     expect(blockedReason(candidate(), { ...CONTEXT, sentThisRun: 25 })).toMatch(/this run/i);
     expect(blockedReason(candidate(), { ...CONTEXT, sentToday: 50 })).toMatch(/Today's limit/);
+  });
+
+  /**
+   * Regression. A missing RESEND_API_KEY used to throw from the send path as a
+   * plain Error, which the failure handler treats as permanent — so one run
+   * with the key unset stopped every enrolment it touched, each needing
+   * reactivation by hand. It is a deployment setting, not a fact about the
+   * recipient, so it blocks transiently and the enrolment keeps its place.
+   */
+  it('blocks rather than stops when the deployment has no provider', () => {
+    const reason = blockedReason(candidate(), { ...CONTEXT, hasEmailProvider: false });
+    expect(reason).toMatch(/No email provider is configured/);
+    expect(isTransientBlock(reason as string)).toBe(true);
+  });
+
+  it('does the same for SMS', () => {
+    const reason = blockedReason(candidate({ channel: 'sms' }), {
+      ...CONTEXT,
+      hasSmsProvider: false
+    });
+    expect(reason).toMatch(/No SMS provider is configured/);
+    expect(isTransientBlock(reason as string)).toBe(true);
+  });
+
+  it('reports a missing provider before a missing address, since it affects every lead', () => {
+    expect(
+      blockedReason(candidate({ toEmail: null }), { ...CONTEXT, hasEmailProvider: false })
+    ).toMatch(/No email provider/);
+  });
+
+  it('still puts consent ahead of a missing provider', () => {
+    // Configuration is fixable; a person who said no is not. Order matters.
+    expect(
+      blockedReason(candidate({ suppressed: true }), { ...CONTEXT, hasEmailProvider: false })
+    ).toMatch(/do-not-contact/);
   });
 
   it('treats caps and windows as temporary, consent as settled', () => {

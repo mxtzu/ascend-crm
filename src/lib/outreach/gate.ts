@@ -70,6 +70,9 @@ export interface GateContext {
   sentToday: number;
   /** Sends made in this run, against the per-run limit. */
   sentThisRun: number;
+  /** Whether this deployment has the provider keys for each channel. */
+  hasEmailProvider: boolean;
+  hasSmsProvider: boolean;
 }
 
 /**
@@ -97,6 +100,16 @@ export function blockedReason(
 
   if (NEVER_CONTACT_STAGES.includes(candidate.leadStage)) {
     return `The lead is ${candidate.leadStage.replace(/_/g, ' ')}, so outreach does not apply.`;
+  }
+
+  // Deployment configuration, before anything about this particular lead.
+  // A missing API key is somebody forgetting to set a variable, not a fact
+  // about the recipient — see isTransientBlock.
+  if (candidate.channel === 'email' && !context.hasEmailProvider) {
+    return 'No email provider is configured.';
+  }
+  if (candidate.channel === 'sms' && !context.hasSmsProvider) {
+    return 'No SMS provider is configured.';
   }
 
   if (candidate.channel === 'email') {
@@ -128,11 +141,19 @@ export function blockedReason(
  * A cap or a closed window clears by itself, so the enrolment keeps its place
  * in the queue. Consent and a missing address do not, and retrying them every
  * run forever fills the ledger with noise.
+ *
+ * A missing provider key belongs firmly in the first group, and learning that
+ * the hard way is why it is listed explicitly. It used to be thrown from the
+ * send path as an ordinary Error, which the failure handler treats as
+ * permanent — so one run with an unset RESEND_API_KEY stopped every enrolment
+ * it touched, and each needed reactivating by hand. Nobody forgets an API key
+ * permanently; they fix it and expect the queue to carry on.
  */
 export function isTransientBlock(reason: string): boolean {
   return (
     reason.includes('limit') ||
     reason.includes('sending window') ||
-    reason.includes('switched off')
+    reason.includes('switched off') ||
+    reason.includes('provider is configured')
   );
 }
