@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { blockedReason, isTransientBlock, withinSendWindow, type OutreachSettings } from '../gate';
-import { runOutreach } from '../engine';
+import { CLAIM_LEASE_MS, reclaimForTest, runOutreach } from '../engine';
 import {
   contact,
   ENROLMENT_ID,
@@ -448,5 +448,114 @@ describe('provider failures', () => {
     await runOutreach({ service: db.client(), email, sms: null, siteUrl: SITE, now: IN_WINDOW });
 
     expect(db.rows('outreach_messages')).toHaveLength(1);
+  });
+});
+
+/**
+ * Reclaiming a step's claim.
+ *
+ * The claim row exists so two overlapping runs cannot both email one person.
+ * It used to be permanent: losing the insert race made the engine return, and
+ * because the row stayed behind, every later run lost the same race. A step
+ * whose first send failed could never be retried — and the run reported
+ * nothing at all, because a silent `return` is neither a send nor a skip.
+ *
+ * These drive `reclaim` through the same fake client the engine uses, so the
+ * conditional update is exercised rather than described.
+ */
+describe('taking over a claimed step', () => {
+  const STEP = 'step-1';
+  const ENROLMENT = 'enrolment-1';
+
+  function client(prior: { status: string; created_at: string } | null) {
+    const updates: Array<Record<string, unknown>> = [];
+    let matchedStatus: string | null = null;
+
+    const api = {
+      updates,
+      from() {
+        const filters: Record<string, unknown> = {};
+        let patch: Record<string, unknown> | null = null;
+        const builder: Record<string, unknown> = {
+          select: () => builder,
+          eq: (column: string, value: unknown) => {
+            filters[column] = value;
+            return builder;
+          },
+          update: (values: Record<string, unknown>) => {
+            patch = values;
+            return builder;
+          },
+          maybeSingle: () => {
+            if (patch) {
+              // The conditional update: only applies if status is unchanged.
+              if (prior && filters.status === prior.status) {
+                matchedStatus = String(filters.status);
+                updates.push(patch as Record<string, unknown>);
+                return Promise.resolve({ data: { id: 'm1', body: 'body' }, error: null });
+              }
+              return Promise.resolve({ data: null, error: null });
+            }
+            return Promise.resolve({
+              data: prior ? { id: 'm1', ...prior } : null,
+              error: null
+            });
+          }
+        };
+        return builder;
+      },
+      get matched() {
+        return matchedStatus;
+      }
+    };
+    return api;
+  }
+
+  const NOW = new Date('2026-08-18T12:00:00Z');
+  const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+
+  async function attempt(prior: { status: string; created_at: string } | null) {
+    const fake = client(prior);
+    const result = await reclaimForTest(
+      fake as never,
+      ENROLMENT,
+      STEP,
+      { status: 'queued', subject: 's', body: 'b' },
+      NOW
+    );
+    return { result, updates: fake.updates };
+  }
+
+  it('retakes a failed send, which is the whole point of a retry', async () => {
+    const { result, updates } = await attempt({ status: 'failed', created_at: ago(60_000) });
+    expect(result).toEqual({ id: 'm1', body: 'body' });
+    // The previous error is cleared, so the ledger shows this attempt's outcome.
+    expect(updates[0]).toMatchObject({ status: 'queued', error: null });
+  });
+
+  it.each(['sent', 'delivered', 'opened', 'clicked', 'bounced', 'complained'])(
+    'refuses to retake a %s message, because it already left',
+    async (status) => {
+      const { result, updates } = await attempt({ status, created_at: ago(999_999_999) });
+      expect(result).toBeNull();
+      expect(updates).toEqual([]);
+    }
+  );
+
+  it('leaves a fresh queued claim alone — another run is mid-send', async () => {
+    const { result } = await attempt({ status: 'queued', created_at: ago(60_000) });
+    expect(result).toBeNull();
+  });
+
+  it('retakes a queued claim once the lease has expired', async () => {
+    const { result } = await attempt({
+      status: 'queued',
+      created_at: ago(CLAIM_LEASE_MS + 60_000)
+    });
+    expect(result).toEqual({ id: 'm1', body: 'body' });
+  });
+
+  it('backs off when the row vanished', async () => {
+    expect((await attempt(null)).result).toBeNull();
   });
 });

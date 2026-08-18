@@ -174,6 +174,70 @@ async function advance(
 }
 
 /**
+ * How long a `queued` claim is honoured before another run may take it.
+ *
+ * A claim row is a lease on one step, not a tombstone. It exists so two
+ * overlapping runs cannot both email the same person — but a run that died
+ * mid-send, or one whose send failed, must not lock the step out forever.
+ */
+export const CLAIM_LEASE_MS = 15 * 60_000;
+
+/**
+ * Take over an existing claim, if it is safe to.
+ *
+ * This is the counterpart to the unique index on (lead_outreach_id, step_id).
+ * Losing the insert race used to mean giving up permanently: the engine
+ * returned, and because the row stayed behind, every later run lost the same
+ * race and returned again. A step whose first send failed could therefore
+ * never be retried — silently, with the run reporting nothing at all.
+ *
+ * A claim may be taken over when:
+ *   `failed`  — the send was attempted and did not happen. Retrying is the
+ *               entire point, and the ledger keeps the new outcome.
+ *   `queued`  — but older than the lease, so the run holding it is gone.
+ *
+ * It may NOT be taken over in any other state. `sent`, `delivered`, `bounced`
+ * and the rest all mean the message left the building, and the one thing worse
+ * than never retrying is emailing somebody twice.
+ */
+export { reclaim as reclaimForTest };
+
+async function reclaim(
+  service: CrmSupabaseClient,
+  enrolmentId: string,
+  stepId: string,
+  payload: Record<string, unknown>,
+  now: Date
+): Promise<{ id: string; body: string } | null> {
+  const { data } = await service
+    .from('outreach_messages')
+    .select('id, status, created_at')
+    .eq('lead_outreach_id', enrolmentId)
+    .eq('step_id', stepId)
+    .maybeSingle();
+
+  const prior = data as { id: string; status: string; created_at: string } | null;
+  if (!prior) return null;
+
+  const age = now.getTime() - new Date(prior.created_at).getTime();
+  const reclaimable =
+    prior.status === 'failed' || (prior.status === 'queued' && age > CLAIM_LEASE_MS);
+  if (!reclaimable) return null;
+
+  // Conditional on the status we read, so a run that took it over in the
+  // meantime wins and this one backs off rather than sending as well.
+  const { data: retaken } = await service
+    .from('outreach_messages')
+    .update({ ...payload, error: null })
+    .eq('id', prior.id)
+    .eq('status', prior.status)
+    .select('id, body')
+    .maybeSingle();
+
+  return (retaken as { id: string; body: string } | null) ?? null;
+}
+
+/**
  * Send one step for one enrolment.
  *
  * Returns the outcome so the caller can count it. Everything that could stop a
@@ -356,30 +420,38 @@ async function processEnrolment(
 
   // ---- claim the step ------------------------------------------------------
   // Insert before sending. The unique index on (lead_outreach_id, step_id) is
-  // what stops two overlapping runs both emailing this person; losing the race
-  // here means the other run has it.
+  // what stops two overlapping runs both emailing this person.
+  const payload = {
+    ...base,
+    status: 'queued' as const,
+    subject,
+    body: step.channel === 'email' ? body + emailFooter({
+      unsubscribeUrl: link,
+      postalAddress: settings.postal_address,
+      senderName: settings.from_name
+    }) : body,
+    from_email: step.channel === 'email' ? settings.from_email : null,
+    from_phone: step.channel === 'sms' ? settings.sms_from_number : null
+  };
+
   const { data: claimed, error: claimError } = await service
     .from('outreach_messages')
-    .insert({
-      ...base,
-      status: 'queued',
-      subject,
-      body: step.channel === 'email' ? body + emailFooter({
-        unsubscribeUrl: link,
-        postalAddress: settings.postal_address,
-        senderName: settings.from_name
-      }) : body,
-      from_email: step.channel === 'email' ? settings.from_email : null,
-      from_phone: step.channel === 'sms' ? settings.sms_from_number : null
-    })
+    .insert(payload)
     .select('id, body')
     .maybeSingle();
 
+  let queued = claimed as { id: string; body: string } | null;
+
   if (claimError) {
-    if (/duplicate key/i.test(claimError.message)) return; // another run has it
-    throw new Error(`Could not queue the message: ${claimError.message}`);
+    if (!/duplicate key/i.test(claimError.message)) {
+      throw new Error(`Could not queue the message: ${claimError.message}`);
+    }
+    // Somebody already holds this step. Whether that is a live run or the
+    // wreckage of a dead one decides whether we may take it over.
+    queued = await reclaim(service, enrolment.id, step.id, payload, now);
+    if (!queued) return;
   }
-  const queued = claimed as { id: string; body: string } | null;
+
   if (!queued) return;
 
   // ---- send ----------------------------------------------------------------

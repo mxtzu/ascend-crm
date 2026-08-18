@@ -628,6 +628,25 @@ killed by an unset environment variable. It is now checked in the gate, next to
 "sending is switched off", which is the same kind of fact about the deployment
 rather than about the recipient.
 
+#### A claim is a lease, not a tombstone
+
+Before sending a step, the engine inserts a row into `outreach_messages`. The
+unique index on `(lead_outreach_id, step_id)` means only one run can win that
+insert, which is what stops two overlapping runs emailing the same person the
+same step.
+
+Losing the race used to end the attempt permanently. The engine returned, and
+because the row stayed behind, every later run lost the same race and returned
+again — so a step whose first send failed could never be retried, and the run
+reported neither a send nor a skip. Just "0 sent", with no reason, forever.
+
+A claim can now be taken over when it is `failed`, or `queued` and older than
+`CLAIM_LEASE_MS` (15 minutes, meaning the run holding it is gone). It can never
+be taken over in any other state — `sent`, `delivered`, `bounced` and the rest
+all mean the message left, and the only thing worse than never retrying is
+emailing somebody twice. The takeover is a conditional update on the status
+that was read, so a run that got there first wins and the other backs off.
+
 #### Suppression
 
 `suppressions` is the most important table in the migration. It is written by
