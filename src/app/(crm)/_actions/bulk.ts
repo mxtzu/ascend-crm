@@ -19,7 +19,21 @@ import { chunk, MAX_BULK_SELECTION, planStageMove, summariseStageMove, type Stag
 import { readableWriteError, ValidationError } from '@/lib/crm/errors';
 import { safeDestination, withMessage } from '@/lib/crm/redirects';
 import { requireWriter } from '@/lib/crm/server';
-import { PIPELINE_STAGE_LABELS, PIPELINE_STAGES, type PipelineStage } from '@/lib/crm/types';
+import {
+  OPPORTUNITY_STAGES,
+  PIPELINE_STAGE_LABELS,
+  PIPELINE_STAGES,
+  type OpportunityStage,
+  type PipelineStage
+} from '@/lib/crm/types';
+import {
+  CLOSED_OPPORTUNITY_STAGES,
+  MAX_CONVERT_SELECTION,
+  planConversion,
+  summariseConversion,
+  type ConvertibleLead
+} from '@/lib/crm/opportunities';
+import { convertLeadToOpportunity } from '@/lib/crm/workflow';
 import { planEnrolment, summariseEnrolment } from '@/lib/outreach/enrolment';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -246,4 +260,158 @@ async function enrol(form: FormData): Promise<string> {
   }
 
   return summariseEnrolment(plan, sequence.name);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk conversion to opportunities
+// ---------------------------------------------------------------------------
+
+/**
+ * Open an opportunity for each selected lead.
+ *
+ * One `crm_convert_lead_to_opportunity()` RPC per lead, because that function
+ * creates the deal, advances the lead's stage and writes the activity in a
+ * single transaction. Doing it in one bulk statement would mean reimplementing
+ * all three and losing the transaction.
+ *
+ * A failure on one lead does not abandon the rest. Ninety-nine deals opened
+ * and one refused is a better outcome than nothing, provided the report says
+ * so — which is why the summary names the first error rather than only
+ * counting them.
+ */
+export async function createOpportunitiesForLeads(form: FormData): Promise<void> {
+  const back = safeDestination(form.get('return_to'), '/leads');
+
+  let key: 'error' | 'notice' = 'notice';
+  let message: string;
+
+  try {
+    message = await convert(form);
+    revalidatePath('/leads');
+    revalidatePath('/opportunities');
+    revalidatePath('/pipeline');
+    revalidatePath('/dashboard');
+  } catch (error) {
+    key = 'error';
+    message = readableWriteError(error);
+  }
+
+  redirect(withMessage(back, key, message));
+}
+
+async function convert(form: FormData): Promise<string> {
+  const { client } = await requireWriter();
+
+  const ids = selectedIds(form);
+  if (ids.length > MAX_CONVERT_SELECTION) {
+    throw new ValidationError(
+      `That is ${ids.length} leads. Opening opportunities is one write each, so it is capped at ${MAX_CONVERT_SELECTION} at a time — narrow the filters and work through it in batches.`
+    );
+  }
+
+  const stage = opportunityStageOf(form.get('opportunity_stage'));
+  const service = optionalText(form.get('service_name'), 'Service', 120);
+  const monthly = optionalMoney(form.get('monthly_value'), 'Monthly value');
+
+  // Through RLS, joined to the research for the company name.
+  const { data, error } = await client
+    .from('crm_leads')
+    .select('id, external_lead_id, lead_intelligence(company_name)')
+    .in('id', ids);
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    external_lead_id: string;
+    lead_intelligence: { company_name: string | null } | { company_name: string | null }[] | null;
+  }>;
+  if (rows.length === 0) {
+    throw new ValidationError('Those leads no longer exist. Reload and try again.');
+  }
+
+  const leads: ConvertibleLead[] = rows.map((row) => {
+    const intel = Array.isArray(row.lead_intelligence)
+      ? row.lead_intelligence[0]
+      : row.lead_intelligence;
+    return {
+      id: row.id,
+      external_lead_id: row.external_lead_id,
+      company_name: intel?.company_name ?? null
+    };
+  });
+
+  // Which of these already have a deal in flight.
+  const openAlready: string[] = [];
+  for (const batch of chunk(ids)) {
+    const { data: open, error: openError } = await client
+      .from('opportunities')
+      .select('crm_lead_id')
+      .in('crm_lead_id', batch)
+      .not('stage', 'in', `(${CLOSED_OPPORTUNITY_STAGES.join(',')})`);
+    if (openError) throw new Error(openError.message);
+    for (const row of (open ?? []) as Array<{ crm_lead_id: string }>) {
+      openAlready.push(row.crm_lead_id);
+    }
+  }
+
+  const plan = planConversion(leads, openAlready, service);
+
+  let created = 0;
+  const errors: string[] = [];
+  for (const target of plan.create) {
+    try {
+      await convertLeadToOpportunity(client, {
+        crm_lead_id: target.crm_lead_id,
+        name: target.name,
+        stage,
+        contact_id: null,
+        owner_id: null,
+        service_name: service,
+        setup_fee: null,
+        monthly_value: monthly,
+        one_time_value: null,
+        contract_months: null,
+        probability: null,
+        expected_close_date: null,
+        pain_points: null,
+        desired_outcome: null,
+        budget: null,
+        objections: null,
+        next_action: null,
+        next_action_at: null,
+        note: null
+      });
+      created += 1;
+    } catch (error) {
+      errors.push(readableWriteError(error));
+    }
+  }
+
+  return summariseConversion(created, plan, errors);
+}
+
+function opportunityStageOf(value: FormDataEntryValue | null): OpportunityStage {
+  const text = String(value ?? '').trim();
+  if (!text) return 'discovery';
+  if (OPPORTUNITY_STAGES.indexOf(text as OpportunityStage) === -1) {
+    throw new ValidationError('That is not an opportunity stage.');
+  }
+  return text as OpportunityStage;
+}
+
+function optionalText(value: FormDataEntryValue | null, label: string, max: number): string | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (text.length > max) throw new ValidationError(`${label} is longer than ${max} characters.`);
+  return text;
+}
+
+function optionalMoney(value: FormDataEntryValue | null, label: string): number | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new ValidationError(`${label} must be a number of 0 or more.`);
+  }
+  return parsed;
 }

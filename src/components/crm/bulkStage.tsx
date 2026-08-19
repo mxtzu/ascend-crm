@@ -9,7 +9,13 @@
 
 'use client';
 
-import { PIPELINE_STAGE_LABELS, PIPELINE_STAGES, type PipelineStage } from '@/lib/crm/types';
+import { humanise } from '@/lib/crm/format';
+import {
+  OPPORTUNITY_STAGES,
+  PIPELINE_STAGE_LABELS,
+  PIPELINE_STAGES,
+  type PipelineStage
+} from '@/lib/crm/types';
 
 const checkboxClass = 'h-4 w-4 rounded border-line bg-ink-800 accent-electric-500';
 const selectClass = 'rounded-lg border border-line bg-ink-800 px-3 py-2 text-sm text-white';
@@ -62,12 +68,16 @@ export function BulkStageBar({
   stageCount,
   sequences,
   enrolAction,
-  sendingEnabled
+  convertAction,
+  sendingEnabled,
+  maxConvert
 }: {
   stageCount: number;
   sequences: { id: string; name: string }[];
   enrolAction: (form: FormData) => void | Promise<void>;
+  convertAction: (form: FormData) => void | Promise<void>;
   sendingEnabled: boolean;
+  maxConvert: number;
 }) {
   return (
     <div className="space-y-3 border-t border-line px-4 py-3">
@@ -110,10 +120,42 @@ export function BulkStageBar({
         </div>
       ) : null}
 
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="label-mono w-24 shrink-0 text-white/40">Open deal</span>
+        <select name="opportunity_stage" defaultValue="discovery" className={selectClass}>
+          {OPPORTUNITY_STAGES.map((value) => (
+            <option key={value} value={value}>
+              {humanise(value)}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          name="service_name"
+          placeholder="Service (optional)"
+          maxLength={120}
+          className={`${selectClass} w-44`}
+        />
+        <input
+          type="number"
+          name="monthly_value"
+          min={0}
+          step="0.01"
+          placeholder="Monthly £"
+          className={`${selectClass} w-32`}
+        />
+        <button type="submit" formAction={convertAction} className={buttonClass}>
+          Create
+        </button>
+        <span className="text-xs text-white/35">
+          One deal per lead, named after the company. Up to {maxConvert} at a time.
+        </span>
+      </div>
+
       <p className="text-xs text-white/35">
         Tick the leads above, or use the header box to take all {stageCount} shown. Every stage
-        move is recorded in that lead&rsquo;s history; leads on do-not-contact are never moved or
-        enrolled in bulk.
+        move is recorded in that lead&rsquo;s history. Leads on do-not-contact are never moved or
+        enrolled in bulk, and a lead that already has an open deal is not given a second one.
       </p>
     </div>
   );

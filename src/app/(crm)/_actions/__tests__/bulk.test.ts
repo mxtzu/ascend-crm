@@ -10,13 +10,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { moveLeadsToStage } from '../bulk';
+import { createOpportunitiesForLeads, moveLeadsToStage } from '../bulk';
 
 const h = vi.hoisted(() => ({
   redirects: [] as string[],
   rows: [] as Array<{ id: string; pipeline_stage: string }>,
   updates: [] as Array<{ stage: string; ids: string[] }>,
-  writerError: null as Error | null
+  writerError: null as Error | null,
+  openOpportunities: [] as string[],
+  rpcCalls: [] as Array<Record<string, unknown>>,
+  rpcFailOn: null as string | null
 }));
 
 vi.mock('next/cache', () => ({ revalidatePath: () => undefined }));
@@ -28,6 +31,86 @@ vi.mock('next/navigation', () => ({
   }
 }));
 
+interface FakeResult {
+  data: unknown;
+  error: { message: string } | null;
+}
+
+interface FakeBuilder {
+  select(columns?: string): FakeBuilder;
+  eq(): FakeBuilder;
+  not(): FakeBuilder;
+  update(patch: { pipeline_stage: string }): FakeBuilder;
+  in(column: string, ids: string[]): FakeBuilder;
+  then(
+    resolve: (value: FakeResult) => unknown,
+    reject?: (reason: unknown) => unknown
+  ): Promise<unknown>;
+}
+
+/**
+ * A thenable query builder, because the chains under test do not all end on
+ * the same method: the stage read finishes on `.in()`, the open-deal lookup
+ * finishes on `.not()`. Resolving on await instead of on a chosen terminal
+ * method keeps the fake honest about order.
+ *
+ * A `function` declaration on purpose — `vi.mock` factories are hoisted above
+ * the imports, so a `const` here would be in its temporal dead zone.
+ */
+function fakeFrom(table: string): FakeBuilder {
+  const state: { stage?: string; ids: string[]; withCompany: boolean } = {
+    ids: [],
+    withCompany: false
+  };
+
+  function compute(): FakeResult {
+    if (table === 'opportunities') {
+      return {
+        data: h.openOpportunities
+          .filter((id) => state.ids.indexOf(id) !== -1)
+          .map((id) => ({ crm_lead_id: id })),
+        error: null
+      };
+    }
+    if (state.stage) {
+      h.updates.push({ stage: state.stage, ids: state.ids });
+      return { data: null, error: null };
+    }
+    const matched = h.rows.filter((row) => state.ids.indexOf(row.id) !== -1);
+    return {
+      data: state.withCompany
+        ? matched.map((row) => ({
+            id: row.id,
+            external_lead_id: `ext-${row.id.slice(0, 4)}`,
+            lead_intelligence: { company_name: 'Acme Ltd' }
+          }))
+        : matched,
+      error: null
+    };
+  }
+
+  const builder: FakeBuilder = {
+    select(columns?: string) {
+      state.withCompany = Boolean(columns && columns.indexOf('lead_intelligence') !== -1);
+      return builder;
+    },
+    eq: () => builder,
+    not: () => builder,
+    update(patch: { pipeline_stage: string }) {
+      state.stage = patch.pipeline_stage;
+      return builder;
+    },
+    in(_column: string, ids: string[]) {
+      state.ids = ids;
+      return builder;
+    },
+    then(resolve, reject) {
+      return Promise.resolve(compute()).then(resolve, reject);
+    }
+  };
+  return builder;
+}
+
 vi.mock('@/lib/crm/server', () => ({
   requireWriter: async () => {
     if (h.writerError) throw h.writerError;
@@ -35,27 +118,14 @@ vi.mock('@/lib/crm/server', () => ({
       profile: { id: 'p1', role: 'sales', is_active: true },
       userId: 'p1',
       client: {
-        from() {
-          const state: { stage?: string } = {};
-          const builder = {
-            select: () => builder,
-            update: (patch: { pipeline_stage: string }) => {
-              state.stage = patch.pipeline_stage;
-              return builder;
-            },
-            in: (_column: string, ids: string[]) => {
-              if (state.stage) {
-                h.updates.push({ stage: state.stage, ids });
-                return Promise.resolve({ data: null, error: null });
-              }
-              return Promise.resolve({
-                data: h.rows.filter((row) => ids.indexOf(row.id) !== -1),
-                error: null
-              });
-            }
-          };
-          return builder;
-        }
+        async rpc(_name: string, args: Record<string, unknown>) {
+          h.rpcCalls.push(args);
+          if (h.rpcFailOn && args.p_lead_id === h.rpcFailOn) {
+            return { data: null, error: { message: 'An opportunity needs a name.' } };
+          }
+          return { data: 'opp-1', error: null };
+        },
+        from: fakeFrom
       }
     };
   }
@@ -183,5 +253,106 @@ describe('where it sends you back to', () => {
     // The backslash form browsers normalise to //. See src/lib/crm/redirects.ts.
     const { path } = await submit(form('contacted', [A], '/\\evil.example'));
     expect(path).toBe('/leads');
+  });
+});
+
+/**
+ * Bulk conversion to opportunities.
+ *
+ * The RPC does the real work — deal, stage advance and activity in one
+ * transaction — so what is worth testing here is everything around it: the
+ * cap, the duplicate guard, that one failure does not abandon the rest, and
+ * that a partial success is reported as one.
+ */
+describe('opening opportunities in bulk', () => {
+  function convertForm(ids: string[], fields: Record<string, string> = {}): FormData {
+    const data = new FormData();
+    for (const id of ids) data.append('lead_id', id);
+    for (const key of Object.keys(fields)) data.append(key, fields[key]);
+    return data;
+  }
+
+  async function submitConvert(data: FormData) {
+    await expect(createOpportunitiesForLeads(data)).rejects.toThrow('NEXT_REDIRECT');
+    const url = h.redirects[h.redirects.length - 1];
+    const params = new URL(url, 'http://x').searchParams;
+    return {
+      error: params.get('error') ?? undefined,
+      notice: params.get('notice') ?? undefined
+    };
+  }
+
+  beforeEach(() => {
+    h.openOpportunities = [];
+    h.rpcCalls.length = 0;
+    h.rpcFailOn = null;
+  });
+
+  it('opens one deal per lead, named after the company', async () => {
+    const { notice } = await submitConvert(convertForm([A, B]));
+    expect(h.rpcCalls.length).toBe(2);
+    expect(h.rpcCalls[0].p_name).toBe('Acme Ltd');
+    expect(notice).toContain('Opened 2 opportunities');
+  });
+
+  it('appends the shared service to every name', async () => {
+    await submitConvert(convertForm([A], { service_name: 'SEO retainer' }));
+    expect(h.rpcCalls[0].p_name).toBe('Acme Ltd — SEO retainer');
+    expect(h.rpcCalls[0].p_service_name).toBe('SEO retainer');
+  });
+
+  it('passes the stage and monthly value through', async () => {
+    await submitConvert(convertForm([A], { opportunity_stage: 'proposal', monthly_value: '1500' }));
+    expect(h.rpcCalls[0].p_stage).toBe('proposal');
+    expect(h.rpcCalls[0].p_monthly_value).toBe(1500);
+  });
+
+  it('defaults to discovery with no commercials', async () => {
+    await submitConvert(convertForm([A]));
+    expect(h.rpcCalls[0].p_stage).toBe('discovery');
+    expect(h.rpcCalls[0].p_monthly_value).toBeNull();
+  });
+
+  it('skips a lead that already has an open deal', async () => {
+    h.openOpportunities = [A];
+    const { notice } = await submitConvert(convertForm([A, B]));
+    expect(h.rpcCalls.length).toBe(1);
+    expect(notice).toContain('1 lead already had an open deal');
+  });
+
+  it('keeps going after one lead fails, and says so', async () => {
+    h.rpcFailOn = B;
+    const { notice } = await submitConvert(convertForm([A, B]));
+    expect(h.rpcCalls.length).toBe(2);
+    expect(notice).toContain('Opened 1 opportunity');
+    expect(notice).toContain('1 failed');
+  });
+
+  it('refuses more than the cap', async () => {
+    const many = Array.from({ length: 101 }, (_, i) =>
+      `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`
+    );
+    const { error } = await submitConvert(convertForm(many));
+    expect(error).toContain('101 leads');
+    expect(h.rpcCalls).toEqual([]);
+  });
+
+  it('refuses a stage that is not one', async () => {
+    const { error } = await submitConvert(convertForm([A], { opportunity_stage: 'daydream' }));
+    expect(error).toContain('not an opportunity stage');
+    expect(h.rpcCalls).toEqual([]);
+  });
+
+  it('refuses a negative monthly value', async () => {
+    const { error } = await submitConvert(convertForm([A], { monthly_value: '-5' }));
+    expect(error).toContain('0 or more');
+    expect(h.rpcCalls).toEqual([]);
+  });
+
+  it("refuses a viewer's write", async () => {
+    h.writerError = new Error('Your role is read-only. Ask an admin for write access.');
+    const { error } = await submitConvert(convertForm([A]));
+    expect(error).toContain('read-only');
+    expect(h.rpcCalls).toEqual([]);
   });
 });

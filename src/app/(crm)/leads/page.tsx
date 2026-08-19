@@ -8,7 +8,11 @@
 
 import Link from 'next/link';
 
-import { enrolLeadsInSequence, moveLeadsToStage } from '@/app/(crm)/_actions/bulk';
+import {
+  createOpportunitiesForLeads,
+  enrolLeadsInSequence,
+  moveLeadsToStage
+} from '@/app/(crm)/_actions/bulk';
 import { BulkStageBar, SelectAllLeads, SelectLead } from '@/components/crm/bulkStage';
 import { ActionError, ActionNotice, ReturnTo } from '@/components/crm/forms';
 import { ImportPanel } from '@/components/crm/importPanel';
@@ -24,6 +28,7 @@ import {
   Table
 } from '@/components/crm/ui';
 import { formatRelative, orDash } from '@/lib/crm/format';
+import { MAX_CONVERT_SELECTION } from '@/lib/crm/opportunities';
 import { canWrite, isAdmin } from '@/lib/crm/permissions';
 import { listLeads, listOutreachSequences } from '@/lib/crm/queries';
 import { crmSession } from '@/lib/crm/server';
@@ -145,7 +150,9 @@ export default async function LeadsPage({ searchParams }: { searchParams?: Searc
               stageCount={leads.length}
               sequences={activeSequences}
               enrolAction={enrolLeadsInSequence}
+              convertAction={createOpportunitiesForLeads}
               sendingEnabled={settings?.sending_enabled ?? false}
+              maxConvert={MAX_CONVERT_SELECTION}
             />
           ) : undefined
         }

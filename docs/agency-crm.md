@@ -271,6 +271,40 @@ workflow — a deal should not silently reverse — and wrong here: preparing an
 outreach batch legitimately includes moving leads backwards to re-work them,
 and marking a batch `disqualified` is a move the RPC cannot express.
 
+### Opening a batch of opportunities
+
+The same bulk bar has an **Open deal** row: a stage, an optional service name,
+an optional monthly value, and a Create button. It opens one opportunity per
+selected lead.
+
+It is one `crm_convert_lead_to_opportunity()` call per lead rather than one
+bulk statement, because that function creates the deal, advances the lead's
+stage and writes the activity in a single transaction. A bulk insert would mean
+reimplementing all three and losing the transaction.
+
+That cost is why the cap here is **100**, not the 500 the stage mover allows —
+a round trip each has a wall clock, and a serverless invocation does not have
+long. It is also a reasonable product limit: opening a hundred deals in one
+click is already a lot.
+
+Three behaviours worth knowing:
+
+- **A lead that already has an open deal is skipped.** A converted lead stays
+  in a filtered list until its stage moves, so running the same selection twice
+  is easy to do — and without this it silently doubles the pipeline value.
+  `won` and `lost` do not count as open, so a lead can legitimately be revisited
+  after a closed deal.
+- **The deal is named after the company**, with the shared service appended when
+  one is given — "Acme Dental — SEO retainer" rather than a hundred rows called
+  the same thing. A lead with no company name falls back to its
+  `external_lead_id`, because the RPC refuses a blank name outright.
+- **One failure does not abandon the rest.** Ninety-nine deals opened and one
+  refused beats nothing, so failures are collected rather than thrown, and the
+  summary names the first of them: a bare count sends somebody to a log they
+  may not have.
+
+The decision logic is pure, in `src/lib/crm/opportunities.ts`.
+
 ### The sales workflow
 
 Five transitions move a deal, and each one touches several tables at once:
@@ -759,7 +793,7 @@ Put in triggers rather than application code, so it holds no matter which client
 | --- | --- |
 | `/login` | Sign in (server action; no credentials in client JS) |
 | `/dashboard` | Today's tasks, upcoming appointments, weighted pipeline, recent leads |
-| `/leads` | Filterable list — stage, minimum score, company-name search; bulk stage moves; import panel for admins |
+| `/leads` | Filterable list — stage, minimum score, company-name search; bulk stage moves, bulk enrolment, bulk deal creation; import panel for admins |
 | `/leads/[id]` | CRM state, intelligence, timeline + CRUD for contacts, tasks, appointments, opportunities, notes |
 | `/leads/[id]/call` | Sales call workspace — talking points, call notes, follow-up and task in one save |
 | `/pipeline` | Board, one column per active stage |
